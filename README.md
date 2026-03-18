@@ -160,8 +160,6 @@ Run `opencli list` for the live registry.
 | **xueqiu** | `feed` `hot-stock` `hot` `search` `stock` `watchlist` | 🔐 Browser |
 | **antigravity** | `status` `send` `read` `new` `evaluate` | 🖥️ Desktop |
 | **chatgpt** | `status` `new` `send` `read` `ask` | 🖥️ Desktop |
-| **wechat** | `status` `send` `new` `search` `read` | 🖥️ Desktop |
-| **feishu** | `status` `send` `new` `search` `read` | 🖥️ Desktop |
 | **xiaohongshu** | `search` `notifications` `feed` `me` `user` `download` | 🔐 Browser |
 | **xiaoyuzhou** | `podcast` `podcast-episodes` `episode` | 🌐 Public |
 | **zhihu** | `hot` `search` `question` `download` | 🔐 Browser |

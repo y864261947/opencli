@@ -161,8 +161,6 @@ npm install -g @jackwener/opencli@latest
 | **xueqiu** | `feed` `hot-stock` `hot` `search` `stock` `watchlist` | 🔐 浏览器 |
 | **antigravity** | `status` `send` `read` `new` `evaluate` | 🖥️ 桌面端 |
 | **chatgpt** | `status` `new` `send` `read` `ask` | 🖥️ 桌面端 |
-| **wechat** | `status` `send` `new` `search` `read` | 🖥️ 桌面端 |
-| **feishu** | `status` `send` `new` `search` `read` | 🖥️ 桌面端 |
 | **xiaohongshu** | `search` `notifications` `feed` `me` `user` `download` | 🔐 浏览器 |
 | **xiaoyuzhou** | `podcast` `podcast-episodes` `episode` | 🌐 公开 |
 | **zhihu** | `hot` `search` `question` `download` | 🔐 浏览器 |

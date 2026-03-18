@@ -4,30 +4,51 @@ description: How to CLI-ify and automate any Electron Desktop Application via CD
 
 # CLI-ifying Electron Applications (Skill Guide)
 
-Based on the successful extraction and automation of **Antigravity** and **OpenAI Codex** desktop apps, this guide serves as the standard operating procedure (SOP) for adapting ANY Electron-based application into an OpenCLI adapter.
+Based on the successful automation of **Cursor**, **Codex**, **Antigravity**, **ChatWise**, **Notion**, and **Discord** desktop apps, this guide serves as the standard operating procedure (SOP) for adapting ANY Electron-based application into an OpenCLI adapter.
 
-## 核心原理 (Core Concept)
-Electron 应用本质上是运行在本地的 Chromium 浏览器实例。只要在启动应用时暴露了调试端口（CDP，Chrome DevTools Protocol），我们就可以利用 Playwright MCP 直接穿透其 UI 层，获取并操控包括 React/Vue 组件、Shadow DOM 等在内的所有底层状态，实现“从应用外挂入自动化脚本”。
+## Core Concept
 
-### 启动 Target App 
-要在本地操作任何 Electron 应用，必须先要求用户使用以下参数注入调试端点：
+Electron apps are essentially local Chromium browser instances. By exposing a debugging port (CDP — Chrome DevTools Protocol) at launch time, we can use Playwright to pierce through the UI layer, accessing and controlling all underlying state including React/Vue components and Shadow DOM.
+
+> **Note:** Not all desktop apps are Electron. WeChat (native Cocoa) and Feishu/Lark (custom Lark Framework) embed Chromium but do NOT expose CDP. For those apps, use the AppleScript + clipboard approach instead (see [Non-Electron Pattern](#non-electron-pattern-applescript)).
+
+### Launching the Target App
 ```bash
 /Applications/AppName.app/Contents/MacOS/AppName --remote-debugging-port=9222
 ```
 
-## 标准适配模式：The 5-Command Pattern
+### Verifying Electron
+```bash
+# Check for Electron Framework in the app bundle
+ls /Applications/AppName.app/Contents/Frameworks/Electron\ Framework.framework
+# If this directory exists → Electron → CDP works
+# If not → check for libEGL.dylib (embedded Chromium/CEF, CDP may not work)
+```
 
-适配一个新的 App，必须在 `src/clis/<app_name>/` 下实现这 5 个标准化指令：
+## The 5-Command Pattern (CDP / Electron)
 
-### 1. `status.ts` (连接测试)
-负责确认应用监听正确。
-- **机制**: 直接 `export const statusCommand = cli({...})`
-- **核心代码**: 获取 `window.location.href` 与 `document.title`。
-- **注意**: 必须指明 `domain: 'localhost'` 和 `browser: true`。
+Every new Electron adapter should implement these 5 commands in `src/clis/<app_name>/`:
 
-### 2. `dump.ts` (逆向工程核心)
-很多现代 App DOM 极其庞大且混淆。**千万不要直接猜选择器**。
-首先编写 dump 脚本，将当前页面的 DOM 与 Accessibility Tree 导出到 `/tmp/`，方便用 AI (或者 `grep`) 提取精确的容器名称和 Class。
+### 1. `status.ts` — Connection Test
+```typescript
+export const statusCommand = cli({
+  site: 'myapp',
+  name: 'status',
+  domain: 'localhost',
+  strategy: Strategy.UI,
+  browser: true,       // Requires CDP connection
+  args: [],
+  columns: ['Status', 'Url', 'Title'],
+  func: async (page: IPage) => {
+    const url = await page.evaluate('window.location.href');
+    const title = await page.evaluate('document.title');
+    return [{ Status: 'Connected', Url: url, Title: title }];
+  },
+});
+```
+
+### 2. `dump.ts` — Reverse Engineering Core
+Modern app DOMs are huge and obfuscated. **Never guess selectors.** Dump first, then extract precise class names with AI or `grep`:
 ```typescript
 const dom = await page.evaluate('document.body.innerHTML');
 fs.writeFileSync('/tmp/app-dom.html', dom);
@@ -35,38 +56,70 @@ const snap = await page.snapshot({ interactive: false });
 fs.writeFileSync('/tmp/app-snapshot.json', JSON.stringify(snap, null, 2));
 ```
 
-### 3. `send.ts` (高级注入技巧)
-Electron 应用常常使用极端复杂的富文本编辑器（如 Monaco, Lexical, ProseMirror）。直接修改元素的 `value` 常常会被 React 状态机忽略。
-- **最佳实践**: 使用 `document.execCommand('insertText')` 完美模拟真实的人类复制粘贴输入流，完全穿透 React state。
+### 3. `send.ts` — Advanced Text Injection
+Electron apps often use complex rich-text editors (Monaco, Lexical, ProseMirror). Setting `.value` directly is ignored by React state.
+
+**Best practice:** Use `document.execCommand('insertText')` to perfectly simulate real user input, fully piercing React state:
 ```javascript
-// 寻路机制：优先尝试寻找 contenteditable
-let composer = document.querySelector('[contenteditable="true"]');
+const composer = document.querySelector('[contenteditable="true"]');
 composer.focus();
-document.execCommand('insertText', false, "你好");
+document.execCommand('insertText', false, 'Hello');
 ```
-- **提交快捷键**: `await page.pressKey('Enter')`。
+Then submit with `await page.pressKey('Enter')`.
 
-### 4. `read.ts` (上下文解析)
-不要提取整个页面的文本。应该利用 `dump.ts` 抓取出来的特征寻找真正的“对话容器”。
-- **技巧**: 检查带有语义化结构的数据，例如 `[role="log"]`、`[data-testid="conversation"]` 或是 `[data-content-search-turn-key]`。
-- **格式化**: 拼接抓取出的文本转粗暴渲染成 Markdown 返回，这样不仅你和人类能读懂，LLM 后续作为 Agent 也能精准切分。
+### 4. `read.ts` — Context Extraction
+Don't extract the entire page text. Use `dump.ts` output to find the real "conversation container":
+- Look for semantic selectors: `[role="log"]`, `[data-testid="conversation"]`, `[data-content-search-turn-key]`
+- Format output as Markdown — readable by both humans and LLMs
 
-### 5. `new.ts` / Action Macros (底层事件模拟)
-许多图形界面操作难以找到按钮实例，但它们通常响应原生快捷键。
-- **最佳实践**: 模拟系统级快捷键直接驱动 `(Meta+N / Control+N)`。
+### 5. `new.ts` — Keyboard Shortcuts
+Many GUI actions respond to native shortcuts rather than button clicks:
 ```typescript
 const isMac = process.platform === 'darwin';
 await page.pressKey(isMac ? 'Meta+N' : 'Control+N');
-await page.wait(1); // 等待重渲染
+await page.wait(1); // Wait for re-render
 ```
 
-## 全局环境变量
-为了让 Core Framework 挂载到我们指定的端口，必须在执行指令前（或在 README 中指导用户）注入目标环境端口：
+## Environment Variable
 ```bash
 export OPENCLI_CDP_ENDPOINT="http://127.0.0.1:9222"
 ```
 
-## 踩坑避雷 (Pitfalls & Gotchas)
-1. **端口占用 (EADDRINUSE)**: 确保同一时间只能有一个 App 占据一个端口。如果同时测试 Antigravity (9224) 且你要测试别的 App (9222)，要将 CDP Endpoint 分配开来。
-2. **TypeScript 抽象**: OpenCLI 内部封装了 `IPage` 类型（`src/types.ts`），不是原生的 Playwright Page。要用 `page.pressKey()` 和 `page.evaluate()`，而非 `page.keyboard.press()`。
-3. **延时等待**: DOM 发生剧烈变化后，一定要加上 `await page.wait(0.5)` 到 `1.0` 给框架反应的时间。不要立刻 return 导致连接 prematurely 阻断。
+## Non-Electron Pattern (AppleScript)
+
+For native macOS apps (WeChat, Feishu) that don't expose CDP:
+```typescript
+export const statusCommand = cli({
+  site: 'myapp',
+  strategy: Strategy.PUBLIC,
+  browser: false,       // No browser needed
+  func: async (page: IPage | null) => {
+    const output = execSync("osascript -e 'application \"MyApp\" is running'", { encoding: 'utf-8' }).trim();
+    return [{ Status: output === 'true' ? 'Running' : 'Stopped' }];
+  },
+});
+```
+
+Core techniques:
+- **status**: `osascript -e 'application "AppName" is running'`
+- **send**: `pbcopy` → activate window → `Cmd+V` → `Enter`
+- **read**: `Cmd+A` → `Cmd+C` → `pbpaste`
+- **search**: Activate → `Cmd+F`/`Cmd+K` → `keystroke "query"`
+
+## Pitfalls & Gotchas
+
+1. **Port conflicts (EADDRINUSE)**: Only one app per port. Use unique ports: Codex=9222, ChatGPT=9224, Cursor=9226, ChatWise=9228, Notion=9230, Discord=9232
+2. **IPage abstraction**: OpenCLI wraps Playwright Page as `IPage` (`src/types.ts`). Use `page.pressKey()` and `page.evaluate()`, NOT `page.keyboard.press()`
+3. **Timing**: Always add `await page.wait(0.5)` to `1.0` after DOM mutations. Returning too early disconnects prematurely
+4. **AppleScript requires Accessibility**: Terminal app must be granted permission in System Settings → Privacy & Security → Accessibility
+
+## Port Assignment Table
+
+| App | Port | Mode |
+|-----|------|------|
+| Codex | 9222 | CDP |
+| ChatGPT | 9224 | CDP / AppleScript |
+| Cursor | 9226 | CDP |
+| ChatWise | 9228 | CDP |
+| Notion | 9230 | CDP |
+| Discord | 9232 | CDP |
